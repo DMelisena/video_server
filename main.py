@@ -28,7 +28,6 @@ def get_video_creation_date(temp_path):
             return None
 
 def video_to_frames_from_memory(video_data, output_dir, target_fps=5):
-    video_to_frames_from_memory (video_data, output_dir, target_fps=5):
     """
     Converts video data (from memory) into a sequence of image frames at a specific frame rate.
     Args:
