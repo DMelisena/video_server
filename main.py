@@ -4,111 +4,14 @@ import os
 import uuid
 from datetime import datetime
 import tempfile
+import subprocess
+import shutil
+from flask import request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
+import zipfile
+from pathlib import Path
 
 app = Flask(__name__)
-
-def get_video_creation_date(temp_path):
-    """
-    Extract video creation date from metadata
-    Returns the creation date or None if not available
-    """
-    try:
-        # Try to get file creation time from filesystem
-        creation_time = os.path.getctime(temp_path)
-        return datetime.fromtimestamp(creation_time).isoformat()
-    except:
-        try:
-            # Alternative: try to get from video metadata using OpenCV
-            vidcap = cv2.VideoCapture(temp_path)
-            # Note: OpenCV doesn't provide direct metadata access
-            # This is a fallback that returns None
-            vidcap.release()
-            return None
-        except:
-            return None
-
-def video_to_frames_from_memory(video_data, output_dir, target_fps=5):
-    """
-    Converts video data (from memory) into a sequence of image frames at a specific frame rate.
-    Args:
-        video_data (bytes): The video file data in memory
-        output_dir (str): The directory where the extracted frames will be saved.
-        target_fps (int): Target frames per second to extract (default: 5)
-    Returns:
-        dict: Information about the extraction process including video creation date
-    """
-    import tempfile
-    
-    # Create the output directory if it doesn't exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    # Create a temporary file to work with OpenCV
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
-        temp_file.write(video_data)
-        temp_path = temp_file.name
-    
-    # Get video creation date before processing
-    video_creation_date = get_video_creation_date(temp_path)
-    
-    try:
-        # Open the video file
-        vidcap = cv2.VideoCapture(temp_path)
-        if not vidcap.isOpened():
-            return {
-                'success': False,
-                'error': 'Could not process video data',
-                'frames_saved': 0
-            }
-        
-        # Get video properties
-        original_fps = vidcap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = total_frames / original_fps if original_fps > 0 else 0
-        
-        # Calculate frame interval to achieve target fps
-        frame_interval = original_fps / target_fps if original_fps > 0 else 1
-        
-        frame_count = 0
-        saved_count = 0
-        
-        while True:
-            # Read a new frame
-            success, image = vidcap.read()
-            if not success:
-                break
-            
-            # Check if this frame should be saved based on the interval
-            if frame_count % int(frame_interval) == 0:
-                # Calculate timestamp for filename
-                timestamp = frame_count / original_fps if original_fps > 0 else frame_count
-                
-                # Define the filename and save the frame
-                frame_filename = os.path.join(output_dir, f"frame_{saved_count:05d}_t{timestamp:.2f}s.jpg")
-                cv2.imwrite(frame_filename, image)
-                saved_count += 1
-            
-            frame_count += 1
-        
-        vidcap.release()
-        
-        actual_fps = saved_count / duration if duration > 0 else 0
-        
-        return {
-            'success': True,
-            'original_fps': original_fps,
-            'duration': duration,
-            'total_frames_processed': frame_count,
-            'frames_saved': saved_count,
-            'actual_extraction_fps': actual_fps,
-            'output_directory': output_dir,
-            'video_creation_date': video_creation_date
-        }
-    
-    finally:
-        # Clean up the temporary file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
 
 @app.route('/upload', methods=['POST'])
 def upload_video():
@@ -116,71 +19,102 @@ def upload_video():
         return jsonify({'error': 'No video file found'}), 400
     
     video = request.files['video']
-    
     if video.filename == '':
         return jsonify({'error': 'No video file selected'}), 400
     
     try:
-        # Generate unique identifier for this upload
-        upload_id = str(uuid.uuid4())[:8]
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        processing_date = datetime.now().isoformat()
+        # Create necessary directories
+        os.makedirs('./yolo_crop_clustering', exist_ok=True)
+        os.makedirs('./processed_video_result', exist_ok=True)
         
-        # Create frames directory (no need to save video)
-        frames_dir = f"frames/{timestamp}_{upload_id}"
+        # Save uploaded video with secure filename
+        filename = secure_filename(video.filename)
+        video_path = os.path.join('./yolo_crop_clustering', filename)
+        video.save(video_path)
         
-        # Read video data directly into memory
-        video_data = video.read()
+        # Run YOLO processing command
+        cmd = [
+            'python', 'yolo_crop_cluster.py',
+            '--model', './best-e100-random-fishes.pt',
+            '--source', './yolo_crop_clustering',
+            '--output', './processed_video_result',
+            '--conf', '0.25',
+            '--cluster-method', 'dbscan',
+            '--save-feature'
+        ]
         
-        # Extract frames directly from memory
-        extraction_result = video_to_frames_from_memory(video_data, frames_dir, target_fps=5)
+        # Execute the command
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
-        if extraction_result['success']:
-            response_data = {
-                'message': 'Frames extracted successfully from uploaded video',
-                'upload_id': upload_id,
-                'original_video_name': video.filename,
-                'frames_directory': frames_dir,
-                'dates': {
-                    'video_creation_date': extraction_result.get('video_creation_date'),
-                    'processing_date': processing_date
-                },
-                'extraction_info': {
-                    'original_fps': round(extraction_result['original_fps'], 2),
-                    'duration_seconds': round(extraction_result['duration'], 2),
-                    'frames_extracted': extraction_result['frames_saved'],
-                    'extraction_fps': round(extraction_result['actual_extraction_fps'], 2)
-                }
-            }
-            return jsonify(response_data), 200
-        else:
+        if result.returncode != 0:
             return jsonify({
-                'error': 'Failed to extract frames',
-                'details': extraction_result['error']
+                'error': 'Processing failed',
+                'stderr': result.stderr,
+                'stdout': result.stdout
             }), 500
-            
+        
+        # Check if results exist
+        result_dir = Path('./processed_video_result')
+        if not result_dir.exists() or not any(result_dir.iterdir()):
+            return jsonify({'error': 'No processed results found'}), 500
+        
+        # Create a zip file of the results
+        zip_filename = 'processed_results.zip'
+        zip_path = os.path.join('./processed_video_result', zip_filename)
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk('./processed_video_result'):
+                for file in files:
+                    if file != zip_filename:  # Don't include the zip file itself
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, './processed_video_result')
+                        zipf.write(file_path, arcname)
+        
+        return jsonify({
+            'message': 'Video processed successfully',
+            'download_url': f'/download/{zip_filename}',
+            'stdout': result.stdout
+        })
+        
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Processing timeout (exceeded 5 minutes)'}), 500
     except Exception as e:
-        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+        return jsonify({'error': f'Processing error: {str(e)}'}), 500
+    finally:
+        # Clean up uploaded video file
+        if 'video_path' in locals() and os.path.exists(video_path):
+            os.remove(video_path)
 
-# Optional: Route to list frame folders
-@app.route('/frames', methods=['GET'])
-def list_frames():
-    if not os.path.exists('frames'):
-        return jsonify({'frame_folders': []})
-    
-    frame_folders = []
-    for folder in os.listdir('frames'):
-        folder_path = os.path.join('frames', folder)
-        if os.path.isdir(folder_path):
-            frame_count = len([f for f in os.listdir(folder_path) if f.endswith('.jpg')])
-            
-            frame_folders.append({
-                'folder': folder,
-                'frames_extracted': frame_count,
-                'frames_directory': folder_path
-            })
-    
-    return jsonify({'frame_folders': frame_folders})
+@app.route('/download/<filename>')
+def download_file(filename):
+    """Route to download processed results"""
+    try:
+        return send_from_directory('./processed_video_result', filename, as_attachment=True)
+    except FileNotFoundError:
+        return jsonify({'error': 'File not found'}), 404
+
+@app.route('/results')
+def list_results():
+    """Route to list all files in processed_video_result directory"""
+    try:
+        result_dir = Path('./processed_video_result')
+        if not result_dir.exists():
+            return jsonify({'files': []})
+        
+        files = []
+        for file_path in result_dir.rglob('*'):
+            if file_path.is_file():
+                relative_path = file_path.relative_to(result_dir)
+                files.append({
+                    'name': file_path.name,
+                    'path': str(relative_path),
+                    'size': file_path.stat().st_size,
+                    'download_url': f'/download/{file_path.name}'
+                })
+        
+        return jsonify({'files': files})
+    except Exception as e:
+        return jsonify({'error': f'Error listing files: {str(e)}'}), 500
 
 if __name__ == '__main__':
     # Create frames directory if it doesn't exist
