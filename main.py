@@ -13,6 +13,18 @@ from pathlib import Path
 
 app = Flask(__name__)
 
+# Configuration for Railway deployment
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
+
+@app.route('/')
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'YOLO Fish Detection API',
+        'version': '1.0.0'
+    })
+
 @app.route('/upload', methods=['POST'])
 def upload_video():
     if 'video' not in request.files:
@@ -32,19 +44,33 @@ def upload_video():
         video_path = os.path.join('./yolo_crop_clustering', filename)
         video.save(video_path)
         
+        # Check if model file exists
+        model_path = './best-e100-random-fishes.pt'
+        if not os.path.exists(model_path):
+            # Try to find the model in the mlpackage directory
+            mlpackage_path = './best-e100-random-fishes.mlpackage'
+            if os.path.exists(mlpackage_path):
+                return jsonify({
+                    'error': 'Model is in .mlpackage format. Please provide a .pt model file for YOLO inference.'
+                }), 400
+            else:
+                return jsonify({
+                    'error': 'YOLO model file not found. Please ensure best-e100-random-fishes.pt is in the root directory.'
+                }), 400
+        
         # Run YOLO processing command
         cmd = [
             'python', 'yolo_crop_cluster.py',
-            '--model', './best-e100-random-fishes.pt',
+            '--model', model_path,
             '--source', './yolo_crop_clustering',
             '--output', './processed_video_result',
             '--conf', '0.25',
             '--cluster-method', 'dbscan',
-            '--save-feature'
+            '--save-features'
         ]
         
-        # Execute the command
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        # Execute the command with increased timeout for large files
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # 10 minutes
         
         if result.returncode != 0:
             return jsonify({
@@ -59,7 +85,7 @@ def upload_video():
             return jsonify({'error': 'No processed results found'}), 500
         
         # Create a zip file of the results
-        zip_filename = 'processed_results.zip'
+        zip_filename = f'processed_results_{uuid.uuid4().hex[:8]}.zip'
         zip_path = os.path.join('./processed_video_result', zip_filename)
         
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -73,17 +99,21 @@ def upload_video():
         return jsonify({
             'message': 'Video processed successfully',
             'download_url': f'/download/{zip_filename}',
-            'stdout': result.stdout
+            'stdout': result.stdout,
+            'processing_time': 'completed'
         })
         
     except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Processing timeout (exceeded 5 minutes)'}), 500
+        return jsonify({'error': 'Processing timeout (exceeded 10 minutes)'}), 500
     except Exception as e:
         return jsonify({'error': f'Processing error: {str(e)}'}), 500
     finally:
         # Clean up uploaded video file
         if 'video_path' in locals() and os.path.exists(video_path):
-            os.remove(video_path)
+            try:
+                os.remove(video_path)
+            except Exception as e:
+                print(f"Warning: Could not remove {video_path}: {e}")
 
 @app.route('/download/<filename>')
 def download_file(filename):
@@ -117,8 +147,22 @@ def list_results():
         return jsonify({'error': f'Error listing files: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    # Create frames directory if it doesn't exist
-    if not os.path.exists('frames'):
-        os.makedirs('frames')
+    # Create required directories at startup
+    directories = [
+        'frames', 
+        'yolo_crop_clustering', 
+        'processed_video_result',
+        'static',
+        'templates'
+    ]
     
-    app.run(host='0.0.0.0', port=8081, debug=True)
+    for dir_name in directories:
+        os.makedirs(dir_name, exist_ok=True)
+        print(f"Created directory: {dir_name}")
+    
+    # Get port from environment variable (Railway sets this)
+    port = int(os.environ.get('PORT', 8080))
+    print(f"Starting server on port {port}")
+    
+    # Run the app
+    app.run(host='0.0.0.0', port=port, debug=False)
