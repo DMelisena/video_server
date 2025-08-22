@@ -7,6 +7,9 @@ make delete protocol
 make deleteAll protocol
 make a limit on fileSize on the App
 
+resort :
+only extract one image on each first dbscan result
+reapply dbscan on the images
 
 example command to build docker 
 ```
