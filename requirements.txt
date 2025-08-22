@@ -1,33 +1,27 @@
-# Data Science
-numpy==2.2.6
-pandas==2.3.2
-pillow==11.3.0
-requests==2.32.5
-matplotlib==3.9.0
-seaborn==0.13.2
-
 # Web Framework
 Flask==3.1.2
-Jinja2==3.1.6
 Werkzeug==3.1.3
 
-# Computer Vision
-opencv-python-headless==4.12.0.88
+# Core dependencies
+numpy==1.24.3
+opencv-python-headless==4.8.1.78
+Pillow==10.0.1
 
-# Machine Learning
-scikit-learn==1.7.1
-scipy==1.16.1
+# Machine Learning - CPU optimized versions
+torch==2.0.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
+torchvision==0.15.2+cpu -f https://download.pytorch.org/whl/torch_stable.html
+ultralytics==8.0.196
+
+# Clustering and analysis
+scikit-learn==1.3.0
+pandas==2.0.3
+matplotlib==3.7.2
+seaborn==0.12.2
+
+# TensorFlow CPU (lighter version)
+tensorflow-cpu==2.13.0
 
 # Utilities
-tqdm==4.67.1
-PyYAML==6.0.2
-
-# TensorFlow CPU version
-tensorflow-cpu==2.20.0
-
-# PyTorch CPU version
-torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
-
-# YOLOv8 (Ultralytics)
-ultralytics==8.3.183
+PyYAML==6.0.1
+tqdm==4.66.1
+requests==2.31.0

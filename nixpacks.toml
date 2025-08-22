@@ -1,0 +1,22 @@
+[phases.setup]
+nixPkgs = ['python311', 'pkg-config', 'libGL', 'glib', 'gtk3', 'libsm', 'libxext']
+
+[phases.install]
+cmds = [
+    'pip install --upgrade pip',
+    'pip install --no-cache-dir -r requirements.txt'
+]
+
+[phases.build]
+cmds = [
+    'mkdir -p frames',
+    'mkdir -p yolo_crop_clustering', 
+    'mkdir -p processed_video_result'
+]
+
+[start]
+cmd = 'python main.py'
+
+[variables]
+PYTHONUNBUFFERED = '1'
+FLASK_ENV = 'production'
