@@ -86,20 +86,20 @@ def upload_video():
         
         # Create a zip file of the results
         zip_filename = f'processed_results_{uuid.uuid4().hex[:8]}.zip'
-        zip_path = os.path.join('./processed_video_result', zip_filename)
+        zip_path = os.path.join('./processed_video_result/', zip_filename)
         
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk('./processed_video_result'):
+            for root, dirs, files in os.walk('./processed_video_result/clusters/'):
                 for file in files:
                     if file != zip_filename:  # Don't include the zip file itself
                         file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, './processed_video_result')
+                        arcname = os.path.relpath(file_path, './processed_video_result/clusters/')
                         zipf.write(file_path, arcname)
         
         return jsonify({
             'message': 'Video processed successfully',
             'download_url': f'/download/{zip_filename}',
-            'stdout': result.stdout,
+            # 'stdout': result.stdout,
             'processing_time': 'completed'
         })
         
