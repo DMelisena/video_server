@@ -1,8 +1,12 @@
 [build]
-builder = "dockerfile"
+builder = "nixpacks"
+nixpacksConfigPath = "nixpacks.toml"
 
 [deploy]
 startCommand = "python main.py"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
 
 [experimental]
 configVersion = 2

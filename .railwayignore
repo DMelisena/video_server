@@ -1,0 +1,44 @@
+# Git files
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+.env
+.venv/
+venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+*.md
+
+# Large data files (exclude during build)
+*.mp4
+*.avi
+*.mov
+*.mkv
+frames/
+yolo_crop_clustering/
+processed_video_result/
+
+# Logs
+*.log
+logs/
