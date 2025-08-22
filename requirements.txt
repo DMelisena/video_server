@@ -1,3 +1,5 @@
+--index-url https://download.pytorch.org/whl/cpu
+
 # Core ML libraries (consider CPU versions if GPU not needed)
 tensorflow-cpu==2.20.0  # Use CPU version if no GPU needed
 torch==2.8.0 # Use CPU version if no GPU needed
