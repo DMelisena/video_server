@@ -1,16 +1,14 @@
-Flask
-Werkzeug
-numpy
-opencv-python-headless
-Pillow
-torch --index-url https://download.pytorch.org/whl/cpu
-torchvision --index-url https://download.pytorch.org/whl/cpu
-ultralytics
-scikit-learn
-pandas
-matplotlib
-seaborn
-tensorflow-cpu
-PyYAML
-tqdm
-requests
+Flask==3.0.0
+Werkzeug==3.0.1
+numpy==1.24.3
+opencv-python-headless==4.8.1.78
+Pillow==10.1.0
+ultralytics==8.0.196
+scikit-learn==1.3.2
+pandas==2.1.4
+matplotlib==3.8.2
+seaborn==0.13.0
+tensorflow==2.15.0
+PyYAML==6.0.1
+tqdm==4.66.1
+requests==2.31.0
