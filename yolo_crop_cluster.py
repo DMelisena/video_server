@@ -19,6 +19,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict, Counter
 import pickle
+import glob
+import os
 
 from ultralytics.nn.tasks import DetectionModel # Import the specific class
 torch.serialization.add_safe_globals([DetectionModel])
@@ -88,9 +90,10 @@ class DetectionProcessor:
         self.crops_dir = self.output_dir / 'crops'
         self.clusters_dir = self.output_dir / 'clusters'
         self.analysis_dir = self.output_dir / 'analysis'
+        self.final_clusters_dir = self.output_dir / 'final_clusters'
         
         # Create directories
-        for dir_path in [self.output_dir, self.crops_dir, self.clusters_dir, self.analysis_dir]:
+        for dir_path in [self.output_dir, self.crops_dir, self.clusters_dir, self.analysis_dir, self.final_clusters_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
         
         self.detections = []
@@ -295,6 +298,9 @@ class DetectionProcessor:
         # Organize crops by cluster
         self.organize_by_clusters(cluster_labels)
         
+        # Extract best images and re-cluster
+        self.extract_best_and_recluster()
+        
         # Generate analysis
         self.generate_analysis(features_scaled, cluster_labels, scaler)
         
@@ -343,6 +349,142 @@ class DetectionProcessor:
             json.dump(cluster_summary, f, indent=2)
         
         print(f"Organized into {len(cluster_dirs)} clusters")
+
+    def extract_best_and_recluster(self):
+        """Extract highest confidence image from each cluster and re-cluster using DBSCAN"""
+        print("Extracting best images from each cluster and re-clustering...")
+        
+        # Create directory for best images
+        best_images_dir = self.analysis_dir / 'best_images'
+        best_images_dir.mkdir(exist_ok=True)
+        
+        best_detections = []
+        best_features = []
+        best_crop_paths = []
+        
+        # Extract highest confidence image from each cluster
+        for cluster_dir in self.clusters_dir.iterdir():
+            if not cluster_dir.is_dir():
+                continue
+                
+            cluster_name = cluster_dir.name
+            print(f"Processing cluster: {cluster_name}")
+            
+            # Find all images in this cluster
+            image_files = []
+            for ext in ['*.jpg', '*.jpeg', '*.png']:
+                image_files.extend(glob.glob(str(cluster_dir / ext)))
+            
+            if not image_files:
+                print(f"No images found in {cluster_name}")
+                continue
+            
+            # Extract confidence values and find the best one
+            best_conf = -1
+            best_file = None
+            best_detection_info = None
+            
+            for img_file in image_files:
+                # Extract confidence from filename (format: classname_000000_conf0.XX.jpg)
+                filename = os.path.basename(img_file)
+                try:
+                    conf_part = filename.split('_conf')[-1]
+                    conf_value = float(conf_part.split('.jpg')[0])
+                    
+                    if conf_value > best_conf:
+                        best_conf = conf_value
+                        best_file = img_file
+                        
+                        # Find corresponding detection info
+                        for detection in self.detections:
+                            if os.path.basename(detection['crop_path']) == filename:
+                                best_detection_info = detection
+                                break
+                                
+                except (ValueError, IndexError):
+                    print(f"Could not parse confidence from filename: {filename}")
+                    continue
+            
+            if best_file and best_detection_info:
+                # Copy best image to best_images directory
+                best_filename = f"{cluster_name}_best_{os.path.basename(best_file)}"
+                best_path = best_images_dir / best_filename
+                shutil.copy2(best_file, best_path)
+                
+                # Load image and extract features for re-clustering
+                crop = cv2.imread(best_file)
+                if crop is not None:
+                    if self.args.feature_method == 'resnet':
+                        features = self.extract_resnet_features(crop)
+                    else:
+                        features = self.extract_basic_features(crop)
+                    
+                    best_detections.append(best_detection_info)
+                    best_features.append(features)
+                    best_crop_paths.append(best_path)
+                    
+                    print(f"Selected best image from {cluster_name}: {os.path.basename(best_file)} (conf: {best_conf:.2f})")
+        
+        if len(best_features) == 0:
+            print("No best images found for re-clustering!")
+            return
+        
+        print(f"Re-clustering {len(best_features)} best images using DBSCAN...")
+        
+        # Prepare features for re-clustering
+        features_array = np.array(best_features)
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features_array)
+        
+        # Apply PCA if needed
+        if features_scaled.shape[1] > 50:
+            pca = PCA(n_components=min(50, len(features_scaled)-1), random_state=42)
+            features_scaled = pca.fit_transform(features_scaled)
+        
+        # Perform DBSCAN clustering
+        dbscan = DBSCAN(eps=0.5, min_samples=2)  # Lower min_samples since we have fewer images
+        final_cluster_labels = dbscan.fit_predict(features_scaled)
+        
+        # Organize final clusters
+        final_cluster_dirs = {}
+        for label in np.unique(final_cluster_labels):
+            if label == -1:
+                final_cluster_dir = self.final_clusters_dir / 'noise'
+            else:
+                final_cluster_dir = self.final_clusters_dir / f'final_cluster_{label:02d}'
+            final_cluster_dir.mkdir(exist_ok=True)
+            final_cluster_dirs[label] = final_cluster_dir
+        
+        # Copy best images to final cluster directories
+        for detection, crop_path, final_label in zip(best_detections, best_crop_paths, final_cluster_labels):
+            dest_path = final_cluster_dirs[final_label] / crop_path.name
+            shutil.copy2(crop_path, dest_path)
+        
+        # Save final clustering results
+        final_clustering_results = {
+            'method': 'dbscan_on_best_images',
+            'n_best_images': len(best_detections),
+            'n_final_clusters': len(np.unique(final_cluster_labels)),
+            'final_cluster_labels': final_cluster_labels.tolist(),
+            'eps': 0.5,
+            'min_samples': 2
+        }
+        
+        with open(self.analysis_dir / 'final_clustering_results.json', 'w') as f:
+            json.dump(final_clustering_results, f, indent=2)
+        
+        print(f"Final clustering completed: {len(np.unique(final_cluster_labels))} final clusters created")
+        
+        # Clean up intermediate cluster directories
+        print("Cleaning up intermediate cluster directories...")
+        shutil.rmtree(self.clusters_dir, ignore_errors=True)
+        
+        # Rename final_clusters to clusters for consistency with Flask app
+        if self.final_clusters_dir.exists():
+            if self.clusters_dir.exists():
+                shutil.rmtree(self.clusters_dir)
+            self.final_clusters_dir.rename(self.clusters_dir)
+            print("Renamed final_clusters to clusters")
 
     def generate_analysis(self, features_scaled, cluster_labels, scaler):
         """Generate analysis plots and reports"""
@@ -484,8 +626,8 @@ def main():
         print(f"\n🎉 Processing completed successfully!")
         print(f"📊 Results saved to: {processor.output_dir}")
         print(f"🖼️  Cropped detections: {detection_count}")
-        print(f"🔄 Clusters created: {len(np.unique(cluster_labels))}")
-        print(f"📁 Organized crops in: {processor.clusters_dir}")
+        print(f"🔄 Initial clusters: {len(np.unique(cluster_labels))}")
+        print(f"📁 Final clusters in: {processor.clusters_dir}")
         print(f"📈 Analysis reports in: {processor.analysis_dir}")
         
     except Exception as e:
