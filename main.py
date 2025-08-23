@@ -70,7 +70,7 @@ def upload_video():
         ]
         
         # Execute the command with increased timeout for large files
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # 10 minutes
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=6000)  # 10 minutes
         
         if result.returncode != 0:
             return jsonify({
@@ -89,17 +89,67 @@ def upload_video():
         zip_path = os.path.join('./processed_video_result/', zip_filename)
         
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk('./processed_video_result/clusters/'):
-                for file in files:
-                    if file != zip_filename:  # Don't include the zip file itself
-                        file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, './processed_video_result/clusters/')
-                        zipf.write(file_path, arcname)
+            # Define image extensions
+            image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')
+            
+            # Add files from clusters directory
+            clusters_path = './processed_video_result/clusters/'
+            if os.path.exists(clusters_path):
+                for root, dirs, files in os.walk(clusters_path):
+                    for file in files:
+                        if file.lower().endswith(image_extensions):
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.relpath(file_path, clusters_path)
+                            zipf.write(file_path, arcname)
+            
+            # Add files from analysis directory
+            analysis_path = './processed_video_result/analysis/'
+            if os.path.exists(analysis_path):
+                for root, dirs, files in os.walk(analysis_path):
+                    for file in files:
+                        if file.lower().endswith(image_extensions):
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.join('analysis', os.path.relpath(file_path, analysis_path))
+                            zipf.write(file_path, arcname)
+        
+        # Clean up image files after zip creation
+        def cleanup_images_in_directory(directory_path):
+            """Remove all image files from the specified directory and its subdirectories"""
+            if os.path.exists(directory_path):
+                image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')
+                for root, dirs, files in os.walk(directory_path, topdown=False):
+                    for file in files:
+                        if file.lower().endswith(image_extensions):
+                            try:
+                                file_path = os.path.join(root, file)
+                                os.remove(file_path)
+                                print(f"Deleted: {file_path}")
+                            except Exception as e:
+                                print(f"Warning: Could not delete {file_path}: {e}")
+                    
+                    # Remove empty directories
+                    try:
+                        if not os.listdir(root):  # Directory is empty
+                            os.rmdir(root)
+                            print(f"Removed empty directory: {root}")
+                    except Exception as e:
+                        print(f"Warning: Could not remove directory {root}: {e}")
+        
+        # Clean up the directories after zip creation
+        cleanup_directories = [
+            './processed_video_result/analysis/',
+            './processed_video_result/clusters/',
+            './processed_video_result/crop/'  # This will be cleaned as part of analysis/
+        ]
+        
+        for directory in cleanup_directories:
+            if os.path.exists(directory):
+                cleanup_images_in_directory(directory)
+                print(f"Cleaned up images in: {directory}")
         
         return jsonify({
             'message': 'Video processed successfully',
-            'download_url': f'/download/{zip_filename}',
-            # 'stdout': result.stdout,
+            'download_url': f'https://prime-whole-fish.ngrok-free.app/download/{zip_filename}',
             'processing_time': 'completed'
         })
         
@@ -114,7 +164,6 @@ def upload_video():
                 os.remove(video_path)
             except Exception as e:
                 print(f"Warning: Could not remove {video_path}: {e}")
-
 @app.route('/download/<filename>')
 def download_file(filename):
     """Route to download processed results"""
@@ -166,3 +215,8 @@ if __name__ == '__main__':
     
     # Run the app
     app.run(host='0.0.0.0', port=port, debug=False)
+
+
+# ... your existing code ...
+# Now, this line should work without errors
+model = YOLO(args.model)
