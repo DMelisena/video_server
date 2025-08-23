@@ -20,6 +20,9 @@ import seaborn as sns
 from collections import defaultdict, Counter
 import pickle
 
+from ultralytics.nn.tasks import DetectionModel # Import the specific class
+torch.serialization.add_safe_globals([DetectionModel])
+
 try:
     from ultralytics import YOLO
     ULTRALYTICS_AVAILABLE = True
