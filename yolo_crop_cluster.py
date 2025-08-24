@@ -309,8 +309,8 @@ class DetectionProcessor:
         # Create cluster directories
         cluster_dirs = {}
         for label in np.unique(cluster_labels):
-            if label == -1:  # DBSCAN noise
-                cluster_dir = self.clusters_dir / 'noise'
+            if label == -1:  # DBSCAN noise - save to analysis folder
+                cluster_dir = self.analysis_dir / 'noise'
             else:
                 cluster_dir = self.clusters_dir / f'cluster_{label:02d}'
             cluster_dir.mkdir(exist_ok=True)
@@ -360,10 +360,10 @@ class DetectionProcessor:
             except Exception as e:
                 print(f"❌ Error removing main clusters directory: {e}")
         
-        # Also remove any directories in the output directory that start with 'cluster'
+        # Also remove any directories in the output directory that start with 'cluster' or are named 'noise'
         if self.output_dir.exists():
             for item in self.output_dir.iterdir():
-                if item.is_dir() and item.name.startswith('cluster'):
+                if item.is_dir() and (item.name.startswith('cluster') or item.name == 'noise'):
                     try:
                         shutil.rmtree(item)
                         removed_count += 1
