@@ -3,7 +3,6 @@
 YOLO Detection Cropper and Clusterer
 Runs YOLO inference, crops detected objects, and clusters similar detections
 """
-
 import argparse
 import cv2
 import torch
@@ -21,17 +20,14 @@ from collections import defaultdict, Counter
 import pickle
 import glob
 import os
-
 from ultralytics.nn.tasks import DetectionModel # Import the specific class
 torch.serialization.add_safe_globals([DetectionModel])
-
 try:
     from ultralytics import YOLO
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
     print("Warning: ultralytics not found. Install with: pip install ultralytics")
-
 try:
     import tensorflow as tf
     from tensorflow.keras.applications import ResNet50
@@ -41,7 +37,6 @@ try:
 except ImportError:
     TENSORFLOW_AVAILABLE = False
     print("Warning: tensorflow not found. Feature extraction will be limited.")
-
 def setup_args():
     """Setup command line arguments"""
     parser = argparse.ArgumentParser(description='Crop YOLO detections and cluster similar objects')
@@ -71,7 +66,6 @@ def setup_args():
                         help='Save extracted features for later analysis')
     
     return parser.parse_args()
-
 def get_device(device_arg):
     """Determine the best device to use"""
     if device_arg == 'auto':
@@ -82,7 +76,6 @@ def get_device(device_arg):
         else:
             return 'cpu'
     return device_arg
-
 class DetectionProcessor:
     def __init__(self, args):
         self.args = args
@@ -107,7 +100,6 @@ class DetectionProcessor:
             self.feature_extractor = ResNet50(weights='imagenet', include_top=False, pooling='avg')
         else:
             self.feature_extractor = None
-
     def extract_basic_features(self, crop):
         """Extract basic image features"""
         # Convert to different color spaces
@@ -141,7 +133,6 @@ class DetectionProcessor:
         ])
         
         return features
-
     def extract_resnet_features(self, crop):
         """Extract features using ResNet50"""
         if self.feature_extractor is None:
@@ -157,7 +148,6 @@ class DetectionProcessor:
         # Extract features
         features = self.feature_extractor.predict(crop_array, verbose=0)
         return features.flatten()
-
     def process_detections(self, model, device):
         """Run inference and process detections"""
         print(f"Processing source: {self.args.source}")
@@ -245,7 +235,6 @@ class DetectionProcessor:
         
         print(f"Total detections processed: {detection_count}")
         return detection_count
-
     def cluster_detections(self):
         """Cluster the detections based on extracted features"""
         if len(self.features) == 0:
@@ -305,7 +294,6 @@ class DetectionProcessor:
         self.generate_analysis(features_scaled, cluster_labels, scaler)
         
         return cluster_labels
-
     def organize_by_clusters(self, cluster_labels):
         """Organize cropped images by cluster"""
         print("Organizing crops by clusters...")
@@ -349,7 +337,6 @@ class DetectionProcessor:
             json.dump(cluster_summary, f, indent=2)
         
         print(f"Organized into {len(cluster_dirs)} clusters")
-
     def extract_best_and_recluster(self):
         """Extract highest confidence image from each cluster and re-cluster using DBSCAN"""
         print("Extracting best images from each cluster and re-clustering...")
@@ -441,21 +428,23 @@ class DetectionProcessor:
             pca = PCA(n_components=min(50, len(features_scaled)-1), random_state=42)
             features_scaled = pca.fit_transform(features_scaled)
         
-        # Perform DBSCAN clustering
+        # Perform DBSCAN clustering on best images
         dbscan = DBSCAN(eps=0.5, min_samples=2)  # Lower min_samples since we have fewer images
         final_cluster_labels = dbscan.fit_predict(features_scaled)
         
-        # Organize final clusters
+        # Create final cluster directories at the top level (beside output directory)
+        top_level_dir = self.output_dir.parent
         final_cluster_dirs = {}
+        
         for label in np.unique(final_cluster_labels):
             if label == -1:
-                final_cluster_dir = self.final_clusters_dir / 'noise'
+                final_cluster_dir = top_level_dir / 'noise'
             else:
-                final_cluster_dir = self.final_clusters_dir / f'final_cluster_{label:02d}'
+                final_cluster_dir = top_level_dir / f'best_cluster_{label:02d}'
             final_cluster_dir.mkdir(exist_ok=True)
             final_cluster_dirs[label] = final_cluster_dir
         
-        # Copy best images to final cluster directories
+        # Copy best images to final cluster directories at the top level
         for detection, crop_path, final_label in zip(best_detections, best_crop_paths, final_cluster_labels):
             dest_path = final_cluster_dirs[final_label] / crop_path.name
             shutil.copy2(crop_path, dest_path)
@@ -467,25 +456,37 @@ class DetectionProcessor:
             'n_final_clusters': len(np.unique(final_cluster_labels)),
             'final_cluster_labels': final_cluster_labels.tolist(),
             'eps': 0.5,
-            'min_samples': 2
+            'min_samples': 2,
+            'output_location': 'top_level_directories'
         }
         
         with open(self.analysis_dir / 'final_clustering_results.json', 'w') as f:
             json.dump(final_clustering_results, f, indent=2)
         
-        print(f"Final clustering completed: {len(np.unique(final_cluster_labels))} final clusters created")
+        print(f"Final clustering completed: {len(np.unique(final_cluster_labels))} final clusters created at top level")
+        print(f"Final cluster directories created at: {top_level_dir}")
+        
+        # List the created directories
+        for label, dir_path in final_cluster_dirs.items():
+            if label == -1:
+                print(f"  - noise/ ({len(list(dir_path.glob('*')))} images)")
+            else:
+                print(f"  - best_cluster_{label:02d}/ ({len(list(dir_path.glob('*')))} images)")
         
         # Clean up intermediate cluster directories
         print("Cleaning up intermediate cluster directories...")
         shutil.rmtree(self.clusters_dir, ignore_errors=True)
         
-        # Rename final_clusters to clusters for consistency with Flask app
-        if self.final_clusters_dir.exists():
-            if self.clusters_dir.exists():
-                shutil.rmtree(self.clusters_dir)
-            self.final_clusters_dir.rename(self.clusters_dir)
-            print("Renamed final_clusters to clusters")
-
+        # Create a new clusters directory with the original clustering for reference
+        self.clusters_dir.mkdir(exist_ok=True)
+        
+        # Create a symlink or copy to the best images for easy access
+        best_images_link = self.clusters_dir / 'best_images'
+        if best_images_link.exists():
+            shutil.rmtree(best_images_link)
+        shutil.copytree(best_images_dir, best_images_link)
+        
+        print("Original clusters directory recreated with best_images reference")
     def generate_analysis(self, features_scaled, cluster_labels, scaler):
         """Generate analysis plots and reports"""
         print("Generating analysis...")
@@ -581,7 +582,6 @@ class DetectionProcessor:
                 pickle.dump(features_data, f)
         
         print(f"Analysis saved to: {self.analysis_dir}")
-
 def main():
     """Main function"""
     args = setup_args()
@@ -627,7 +627,7 @@ def main():
         print(f"📊 Results saved to: {processor.output_dir}")
         print(f"🖼️  Cropped detections: {detection_count}")
         print(f"🔄 Initial clusters: {len(np.unique(cluster_labels))}")
-        print(f"📁 Final clusters in: {processor.clusters_dir}")
+        print(f"📁 Final best image clusters created at top level beside output directory")
         print(f"📈 Analysis reports in: {processor.analysis_dir}")
         
     except Exception as e:
@@ -635,6 +635,5 @@ def main():
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
 if __name__ == "__main__":
     main()
