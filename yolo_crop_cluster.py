@@ -69,6 +69,8 @@ def setup_args():
                         help='Save extracted features for later analysis')
     parser.add_argument('--cleanup-clusters', action='store_true',
                         help='Remove all cluster folders after processing')
+    parser.add_argument('--recluster', action='store_true',
+                        help='Perform reclustering on best_images folder')
     
     return parser.parse_args()
 
@@ -156,6 +158,136 @@ class DetectionProcessor:
         # Extract features
         features = self.feature_extractor.predict(crop_array, verbose=0)
         return features.flatten()
+
+    def recluster_best_images(self):
+        """Perform reclustering on images in the best_images folder"""
+        best_images_dir = self.analysis_dir / 'best_images'
+        
+        if not best_images_dir.exists():
+            print(f"Error: best_images directory not found at {best_images_dir}")
+            return
+        
+        # Get all image files from best_images
+        image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')
+        image_files = []
+        for ext in image_extensions:
+            image_files.extend(best_images_dir.glob(f'*{ext}'))
+            image_files.extend(best_images_dir.glob(f'*{ext.upper()}'))
+        
+        if not image_files:
+            print(f"No images found in {best_images_dir}")
+            return
+        
+        print(f"Found {len(image_files)} images in best_images folder for reclustering")
+        
+        # Reset arrays for reclustering
+        recluster_features = []
+        recluster_paths = []
+        recluster_detections = []
+        
+        # Extract features from each image
+        for img_path in image_files:
+            try:
+                # Load image
+                crop = cv2.imread(str(img_path))
+                if crop is None:
+                    print(f"Warning: Could not load {img_path}")
+                    continue
+                
+                # Extract features
+                if self.args.feature_method == 'resnet':
+                    features = self.extract_resnet_features(crop)
+                else:
+                    features = self.extract_basic_features(crop)
+                
+                # Create detection info for this image
+                detection_info = {
+                    'crop_path': str(img_path),
+                    'class_id': 0,  # Default class
+                    'class_name': 'best_image',
+                    'confidence': 1.0,  # Default confidence
+                    'crop_size': [crop.shape[1], crop.shape[0]],
+                    'source_image': 'best_images'
+                }
+                
+                recluster_features.append(features)
+                recluster_paths.append(img_path)
+                recluster_detections.append(detection_info)
+                
+            except Exception as e:
+                print(f"Error processing {img_path}: {e}")
+                continue
+        
+        if len(recluster_features) == 0:
+            print("No valid images to recluster")
+            return
+        
+        # Prepare features for clustering
+        features_array = np.array(recluster_features)
+        
+        # Standardize features
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features_array)
+        
+        # Apply PCA if features are high-dimensional
+        if features_scaled.shape[1] > 50:
+            print("Applying PCA for dimensionality reduction...")
+            pca = PCA(n_components=50, random_state=42)
+            features_scaled = pca.fit_transform(features_scaled)
+        
+        # Perform clustering
+        if self.args.cluster_method == 'kmeans':
+            n_clusters = min(self.args.n_clusters, len(features_scaled))
+            clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        else:  # dbscan
+            clusterer = DBSCAN(eps=0.5, min_samples=2)  # Lower min_samples for smaller dataset
+        
+        cluster_labels = clusterer.fit_predict(features_scaled)
+        
+        print(f"Reclustering completed: {len(np.unique(cluster_labels))} clusters found")
+        
+        # Organize reclustered images
+        self.organize_recluster_results(recluster_paths, recluster_detections, cluster_labels)
+        
+        return cluster_labels
+
+    def organize_recluster_results(self, image_paths, detections, cluster_labels):
+        """Organize reclustered images into new directories"""
+        print("Organizing reclustered images...")
+        
+        # Create recluster directories
+        recluster_dirs = {}
+        for label in np.unique(cluster_labels):
+            if label == -1:  # DBSCAN noise
+                recluster_dir = self.analysis_dir / 'recluster_noise'
+            else:
+                recluster_dir = self.analysis_dir / f'recluster_{label + 1}'
+            recluster_dir.mkdir(exist_ok=True)
+            recluster_dirs[label] = recluster_dir
+        
+        # Copy images to recluster directories
+        recluster_stats = defaultdict(list)
+        
+        for img_path, detection, cluster_label in zip(image_paths, detections, cluster_labels):
+            dest_path = recluster_dirs[cluster_label] / img_path.name
+            shutil.copy2(img_path, dest_path)
+            recluster_stats[cluster_label].append(detection)
+        
+        # Generate recluster summary
+        recluster_summary = {}
+        for cluster_label, cluster_detections in recluster_stats.items():
+            cluster_name = 'recluster_noise' if cluster_label == -1 else f'recluster_{cluster_label + 1}'
+            
+            recluster_summary[cluster_name] = {
+                'count': len(cluster_detections),
+                'avg_width': float(np.mean([d['crop_size'][0] for d in cluster_detections])),
+                'avg_height': float(np.mean([d['crop_size'][1] for d in cluster_detections]))
+            }
+        
+        with open(self.analysis_dir / 'recluster_summary.json', 'w') as f:
+            json.dump(recluster_summary, f, indent=2)
+        
+        print(f"Reclustering organized into {len(recluster_dirs)} directories")
 
     def process_detections(self, model, device):
         """Run inference and process detections"""
@@ -347,9 +479,9 @@ class DetectionProcessor:
         print(f"Organized into {len(cluster_dirs)} clusters")
 
     def cleanup_clusters(self):
-        """Remove all cluster folders and their contents"""
+        """Remove all cluster folders and their contents (but keep recluster directories)"""
         removed_count = 0
-        print("Removing all cluster folders...")
+        print("Removing original cluster folders (keeping recluster directories)...")
         
         # Remove the main clusters directory if it exists
         if self.clusters_dir.exists():
@@ -361,6 +493,7 @@ class DetectionProcessor:
                 print(f"❌ Error removing main clusters directory: {e}")
         
         # Also remove any directories in the output directory that start with 'cluster' or are named 'noise'
+        # BUT NOT recluster directories
         if self.output_dir.exists():
             for item in self.output_dir.iterdir():
                 if item.is_dir() and (item.name.startswith('cluster') or item.name == 'noise'):
@@ -371,10 +504,21 @@ class DetectionProcessor:
                     except Exception as e:
                         print(f"❌ Error removing {item}: {e}")
         
+        # Remove noise directory from analysis but keep recluster directories
+        noise_dir = self.analysis_dir / 'noise'
+        if noise_dir.exists():
+            try:
+                shutil.rmtree(noise_dir)
+                removed_count += 1
+                print(f"✅ Removed noise directory: {noise_dir}")
+            except Exception as e:
+                print(f"❌ Error removing noise directory: {e}")
+        
         if removed_count == 0:
-            print("No cluster folders found to remove")
+            print("No original cluster folders found to remove")
         else:
-            print(f"✅ Successfully removed {removed_count} cluster folder(s)")
+            print(f"✅ Successfully removed {removed_count} original cluster folder(s)")
+            print("🔄 Recluster directories preserved for download")
 
     def generate_analysis(self, features_scaled, cluster_labels, scaler):
         """Generate analysis plots and reports"""
@@ -481,6 +625,18 @@ def main():
         print("Install with: pip install ultralytics")
         sys.exit(1)
     
+    # Initialize processor
+    processor = DetectionProcessor(args)
+    
+    # If recluster flag is set, only perform reclustering
+    if args.recluster:
+        print("🔄 Starting reclustering of best_images...")
+        cluster_labels = processor.recluster_best_images()
+        if cluster_labels is not None:
+            print(f"🎉 Reclustering completed successfully!")
+            print(f"🔄 Recluster results saved to: {processor.analysis_dir}")
+        return
+    
     # Check if model file exists
     if not Path(args.model).exists():
         print(f"Error: Model file not found: {args.model}")
@@ -493,9 +649,6 @@ def main():
         sys.exit(1)
     
     try:
-        # Initialize processor
-        processor = DetectionProcessor(args)
-        
         # Load YOLO model
         print(f"Loading YOLO model: {args.model}")
         device = get_device(args.device)
@@ -513,7 +666,10 @@ def main():
         # Cluster detections
         cluster_labels = processor.cluster_detections()
         
-        # Cleanup clusters if requested
+        # Always perform reclustering if best_images exist (this ensures images are available for zip)
+        processor.recluster_best_images()
+        
+        # Cleanup clusters if requested (but keep recluster directories)
         if args.cleanup_clusters:
             processor.cleanup_clusters()
         
@@ -524,8 +680,9 @@ def main():
         if not args.cleanup_clusters:
             print(f"📁 Organized crops in: {processor.clusters_dir}")
         else:
-            print(f"🗑️  Cluster folders removed (as requested)")
+            print(f"🗑️  Original cluster folders removed (as requested)")
         print(f"📈 Analysis reports in: {processor.analysis_dir}")
+        print(f"🔄 Recluster directories available in analysis folder")
         
     except Exception as e:
         print(f"Error during processing: {e}")

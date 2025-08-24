@@ -33,3 +33,4 @@ last is IMAGE ID inside which can be checked using this command
 ```
 docker images
 ```
+let out the images from best images to another folder than reapply the clustering.
