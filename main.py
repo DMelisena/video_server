@@ -14,7 +14,7 @@ from pathlib import Path
 app = Flask(__name__)
 
 # Configuration for Railway deployment
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 500 *1024 * 1024 * 1024  # 500MB max file size
 
 @app.route('/')
 def health_check():
