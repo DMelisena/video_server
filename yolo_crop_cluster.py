@@ -67,6 +67,8 @@ def setup_args():
                         help='Feature extraction method (default: basic)')
     parser.add_argument('--save-features', action='store_true',
                         help='Save extracted features for later analysis')
+    parser.add_argument('--cleanup-clusters', action='store_true',
+                        help='Remove all cluster folders after processing')
     
     return parser.parse_args()
 
@@ -344,6 +346,18 @@ class DetectionProcessor:
         
         print(f"Organized into {len(cluster_dirs)} clusters")
 
+    def cleanup_clusters(self):
+        """Remove all cluster folders and their contents"""
+        if self.clusters_dir.exists():
+            print("Removing all cluster folders...")
+            try:
+                shutil.rmtree(self.clusters_dir)
+                print("✅ Cluster folders removed successfully")
+            except Exception as e:
+                print(f"❌ Error removing cluster folders: {e}")
+        else:
+            print("No cluster folders found to remove")
+
     def generate_analysis(self, features_scaled, cluster_labels, scaler):
         """Generate analysis plots and reports"""
         print("Generating analysis...")
@@ -481,11 +495,18 @@ def main():
         # Cluster detections
         cluster_labels = processor.cluster_detections()
         
+        # Cleanup clusters if requested
+        if args.cleanup_clusters:
+            processor.cleanup_clusters()
+        
         print(f"\n🎉 Processing completed successfully!")
         print(f"📊 Results saved to: {processor.output_dir}")
         print(f"🖼️  Cropped detections: {detection_count}")
         print(f"🔄 Clusters created: {len(np.unique(cluster_labels))}")
-        print(f"📁 Organized crops in: {processor.clusters_dir}")
+        if not args.cleanup_clusters:
+            print(f"📁 Organized crops in: {processor.clusters_dir}")
+        else:
+            print(f"🗑️  Cluster folders removed (as requested)")
         print(f"📈 Analysis reports in: {processor.analysis_dir}")
         
     except Exception as e:

@@ -137,9 +137,9 @@ def upload_video():
         
         # Clean up the directories after zip creation
         cleanup_directories = [
-            './processed_video_result/analysis/',
-            './processed_video_result/clusters/',
-            './processed_video_result/crop/'  # This will be cleaned as part of analysis/
+            # './processed_video_result/analysis/',
+            # './processed_video_result/clusters/',
+            # './processed_video_result/crop/'  # This will be cleaned as part of analysis/
         ]
         
         for directory in cleanup_directories:
@@ -219,4 +219,3 @@ if __name__ == '__main__':
 
 # ... your existing code ...
 # Now, this line should work without errors
-model = YOLO(args.model)
