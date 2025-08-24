@@ -66,7 +66,7 @@ def upload_video():
             '--output', './processed_video_result',
             '--conf', '0.25',
             '--cluster-method', 'dbscan',
-            '--save-features'
+            '--save-features','--cleanup-clusters'
         ]
         
         # Execute the command with increased timeout for large files

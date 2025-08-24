@@ -348,15 +348,33 @@ class DetectionProcessor:
 
     def cleanup_clusters(self):
         """Remove all cluster folders and their contents"""
+        removed_count = 0
+        print("Removing all cluster folders...")
+        
+        # Remove the main clusters directory if it exists
         if self.clusters_dir.exists():
-            print("Removing all cluster folders...")
             try:
                 shutil.rmtree(self.clusters_dir)
-                print("✅ Cluster folders removed successfully")
+                removed_count += 1
+                print(f"✅ Main clusters directory removed: {self.clusters_dir}")
             except Exception as e:
-                print(f"❌ Error removing cluster folders: {e}")
-        else:
+                print(f"❌ Error removing main clusters directory: {e}")
+        
+        # Also remove any directories in the output directory that start with 'cluster'
+        if self.output_dir.exists():
+            for item in self.output_dir.iterdir():
+                if item.is_dir() and item.name.startswith('cluster'):
+                    try:
+                        shutil.rmtree(item)
+                        removed_count += 1
+                        print(f"✅ Removed cluster directory: {item}")
+                    except Exception as e:
+                        print(f"❌ Error removing {item}: {e}")
+        
+        if removed_count == 0:
             print("No cluster folders found to remove")
+        else:
+            print(f"✅ Successfully removed {removed_count} cluster folder(s)")
 
     def generate_analysis(self, features_scaled, cluster_labels, scaler):
         """Generate analysis plots and reports"""
